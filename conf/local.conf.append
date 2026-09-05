@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# meta-st-odyssey — settings to append to build/conf/local.conf
+#
+# These do not live in a machine/distro conf (the build uses ST's generic
+# MACHINE = "stm32mp1" and selects the board via STM32MP_DT_FILES_*), so they
+# have to go in local.conf. Copy this block into build*/conf/local.conf, or
+#   require ${TOPDIR}/../layers/meta-st-odyssey/conf/local.conf.append
+# from local.conf.
+#
+# See docs/scarthgap-port.md §8 for the rationale.
+# ---------------------------------------------------------------------------
+
+# --- BOOT CRITICAL -------------------------------------------------------------
+# U-Boot only derives ${fdtfile} for "st," compatibles; the Odyssey's is
+# "seeed,stm32mp157c-odyssey", so without this it looks for a non-existent dtb
+# and Linux silently hangs on U-Boot's control FDT.
+UBOOT_EXTLINUX_FDT = "/stm32mp157c-odyssey.dtb"
+
+# --- sdcard image shrink (pairs with the FLASHLAYOUT_PARTITION_SIZE anon-python
+#     override in recipes-st/images/*.bb). Stock layout reserves a 4 GiB rootfs
+#     slot -> ~4.9 GiB raw image; this trims it to ~1.9 GiB. ------------------
+STM32MP_ROOTFS_SIZE = "1835008"
+STM32MP_USERFS_SIZE = "65536"
+
+# --- build speed: build only the Odyssey board DT (13 boards -> 1; ~3x faster
+#     OP-TEE / TF-A / U-Boot / kernel). Drop this block for a full DT matrix.
+STM32MP_DT_FILES_SDCARD:forcevariable = "stm32mp157c-odyssey"
+STM32MP_DT_FILES_EMMC:forcevariable   = ""
+STM32MP_DT_FILES_NAND:forcevariable   = ""
+STM32MP_DT_FILES_NOR_mb:forcevariable = ""
+
+# --- host resource caps (tune to your builder) ------------------------------
+BB_NUMBER_THREADS = "8"
+PARALLEL_MAKE     = "-j 8"

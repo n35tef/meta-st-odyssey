@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: meta-st-odyssey <noreply@example.com>
+Date: Sat, 6 Sep 2026 00:00:00 +0000
+Subject: [PATCH] ARM: dts: stm32mp157c-odyssey: add SPI5 ILI9486 display + touch
+
+Wire the Waveshare 3.5" RPi LCD (C) - an ILI9486 480x320 SPI panel with an
+XPT2046 (ads7846-compatible) resistive touch controller - onto the Odyssey
+40-pin GPIO header.
+
+The header SPI is STM32 SPI5 with SCK/MISO on PH6/PH7 (not the PF7/PF8 of the
+stock spi5_pins_a group), so a board-specific pinmux group is added. Both chip
+selects are driven as GPIOs (PF6 for the LCD, PF3 for the touch). DC=PE7,
+RESET=PE8, touch IRQ=PD4. Backlight on this panel is not SW-controllable.
+
+The panel uses fbtft's fb_ili9486 driver with the waveshare35c init sequence
+(regwidth=16, rotate=90). SPI is capped at 32 MHz (the RPi overlay's 115 MHz is
+not reachable on STM32MP157 SPI5).
+
+Signed-off-by: meta-st-odyssey <noreply@example.com>
+---
+ arch/arm/boot/dts/st/stm32mp157c-odyssey.dts | 87 ++++++++++++++++++++++
+ 1 file changed, 87 insertions(+)
+
+diff --git a/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts b/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
+index 000000000004..000000000005 100644
+--- a/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
++++ b/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
+@@ -87,3 +87,90 @@
+ 	status = "okay";
+ };
+
++
++/*
++ * Waveshare 3.5" RPi LCD (C) - ILI9486 480x320 + XPT2046/ads7846 resistive touch
++ * on the 40-pin GPIO header (SPI5). Header pin map (Seeed Odyssey-STM32MP157C):
++ *   pin 19 SPI5_MOSI = PF9   pin 21 SPI5_MISO = PH7   pin 23 SPI5_CLK = PH6
++ *   pin 24 LCD  CS    = PF6   pin 26 touch CS  = PF3
++ *   pin 18 LCD  DC/RS = PE7   pin 22 LCD RESET = PE8   pin 11 touch IRQ = PD4
++ * Backlight is not SW-controllable on this panel (always on).
++ */
++&pinctrl {
++	spi5_odyssey_pins_a: spi5-odyssey-0 {
++		pins1 {
++			pinmux = <STM32_PINMUX('H', 6, AF5)>, /* SPI5_SCK - hdr23 */
++				 <STM32_PINMUX('F', 9, AF5)>; /* SPI5_MOSI - hdr19 */
++			bias-disable;
++			drive-push-pull;
++			slew-rate = <2>;
++		};
++		pins2 {
++			pinmux = <STM32_PINMUX('H', 7, AF5)>; /* SPI5_MISO - hdr21 */
++			bias-disable;
++		};
++	};
++
++	spi5_odyssey_sleep_pins_a: spi5-odyssey-sleep-0 {
++		pins {
++			pinmux = <STM32_PINMUX('H', 6, ANALOG)>,
++				 <STM32_PINMUX('H', 7, ANALOG)>,
++				 <STM32_PINMUX('F', 9, ANALOG)>;
++		};
++	};
++};
++
++&spi5 {
++	pinctrl-names = "default", "sleep";
++	pinctrl-0 = <&spi5_odyssey_pins_a>;
++	pinctrl-1 = <&spi5_odyssey_sleep_pins_a>;
++	#address-cells = <1>;
++	#size-cells = <0>;
++	cs-gpios = <&gpiof 6 GPIO_ACTIVE_LOW>,	/* CS0 -> LCD   (hdr24, PF6) */
++		   <&gpiof 3 GPIO_ACTIVE_LOW>;	/* CS1 -> touch (hdr26, PF3) */
++	status = "okay";
++
++	lcd: display@0 {
++		compatible = "ilitek,ili9486";
++		reg = <0>;
++		spi-max-frequency = <32000000>;
++		buswidth = <8>;
++		regwidth = <16>;
++		rotate = <90>;
++		bgr = <0>;
++		fps = <30>;
++		txbuflen = <32768>;
++		dc-gpios = <&gpioe 7 GPIO_ACTIVE_HIGH>;		/* hdr18, PE7 */
++		reset-gpios = <&gpioe 8 GPIO_ACTIVE_LOW>;	/* hdr22, PE8 */
++		debug = <0>;
++		/* Waveshare 3.5" (C) ILI9486 init sequence (from waveshare35c overlay) */
++		init = <0x10000f1 0x36 0x04 0x00 0x3c 0x0f 0x8f
++			0x10000f2 0x18 0xa3 0x12 0x02 0xb2 0x12 0xff 0x10 0x00
++			0x10000f8 0x21 0x04
++			0x10000f9 0x00 0x08
++			0x1000036 0x08
++			0x10000b4 0x00
++			0x10000c1 0x41
++			0x10000c5 0x00 0x91 0x80 0x00
++			0x10000e0 0x0f 0x1f 0x1c 0x0c 0x0f 0x08 0x48 0x98 0x37 0x0a 0x13 0x04 0x11 0x0d 0x00
++			0x10000e1 0x0f 0x32 0x2e 0x0b 0x0d 0x05 0x47 0x75 0x37 0x06 0x10 0x03 0x24 0x20 0x00
++			0x100003a 0x55
++			0x1000011
++			0x1000036 0x28
++			0x20000ff
++			0x1000029>;
++	};
++
++	touch: touchscreen@1 {
++		compatible = "ti,ads7846";
++		reg = <1>;
++		spi-max-frequency = <2000000>;
++		interrupt-parent = <&gpiod>;
++		interrupts = <4 IRQ_TYPE_EDGE_FALLING>;		/* hdr11, PD4 */
++		pendown-gpio = <&gpiod 4 GPIO_ACTIVE_LOW>;
++		ti,x-plate-ohms = /bits/ 16 <60>;
++		ti,pressure-max = /bits/ 16 <255>;
++		ti,swap-xy;
++		wakeup-source;
++	};
++};
+--
+2.43.0
