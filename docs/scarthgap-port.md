@@ -7,28 +7,31 @@
 **Layer base commit:** `ca506e6` ("wip", 2026‑09‑05) — the pre‑existing
 mickledore‑era layer.
 
-This document lists **every change** made on top of that base commit, where it
-lives, and why. It is meant to be the basis of an upstream contribution back to
+This document covers the **base board-support layer only** — what makes any
+Odyssey board boot through the OpenSTLinux secure flow. The Waveshare SPI
+display + XPT2046 touch + LVGL kiosk demo used to live in this same layer;
+they were split out into a separate, optional
+[meta-odyssey-demo](../../meta-odyssey-demo) layer so a plain `meta-st-odyssey`
+checkout stays pure board support. See that layer's README and
+`docs/` for the display/touch/demo change report.
+
+This document is meant to be the basis of an upstream contribution back to
 Seeed.
 
 ---
 
-## 0. TL;DR — what the port does
+## 0. TL;DR — what this layer does
 
 1. **Boots the OpenSTLinux secure flow** (BootROM → TF‑A BL2 → OP‑TEE BL32 →
    U‑Boot → Linux, SCMI clocks/resets owned by OP‑TEE) on the Odyssey, which the
    upstream `stm32mp157c-odyssey.dts` does not do.
 2. **Adds an OP‑TEE board device tree** for the Odyssey (none exists upstream),
    with the STPMIC1 on **I2C2** (where the Odyssey wires it) instead of I2C4.
-3. **Adds a Waveshare 3.5" ILI9486 SPI panel + XPT2046 touch** on the 40‑pin
-   header (kernel `fbtft`).
-4. **Adds an LVGL "car‑dashboard" kiosk** app and a minimal image that boots
-   straight to it (no Weston).
-5. **Drops** all the mickledore‑era 6.1 kernel / TF‑A / U‑Boot patches that no
+3. **Drops** all the mickledore‑era 6.1 kernel / TF‑A / U‑Boot patches that no
    longer apply and are not needed on 6.6.
 
 Everything is contained in `layers/meta-st-odyssey/` plus a handful of
-`local.conf` settings (section 8). No files under `layers/openembedded-core/`
+`local.conf` settings (section 6). No files under `layers/openembedded-core/`
 or `layers/meta-st/` were modified.
 
 ---
@@ -41,26 +44,24 @@ or `layers/meta-st/` were modified.
 | 2 | `recipes-security/optee/optee-os-stm32mp/0001-stm32mp157c-odyssey-optee-dt.patch` | **new** | OP‑TEE Odyssey board DT + non‑secure I2C2 kernel clock + `conf.mk` flavour |
 | 3 | `recipes-security/optee/optee-os-stm32mp/0001-Add-stm32mp157c-odyssey-device-tree-based-on-dk2.patch` | **deleted** | superseded by #2 |
 | 4 | `recipes-security/optee/optee-os-stm32mp/0002-stm32mp157c-odyssey-pmic-on-i2c2.patch` | **deleted** | superseded by #2 (mickledore‑era, `&hash1` / RNG1 assumptions broke 4.0.0) |
-| 5 | `recipes-security/optee/optee-os-stm32mp/0003-fix-change-VCO-from-594MHz-to-750MHz-for-eth-phy.patch` | **deleted** | Ethernet PLL4 rework — postponed, see §7 |
-| 6 | `recipes-kernel/linux/linux-stm32mp_%.bbappend` | **modified** | new SRC_URI (SCMI + display patches + config fragment) |
+| 5 | `recipes-security/optee/optee-os-stm32mp/0003-fix-change-VCO-from-594MHz-to-750MHz-for-eth-phy.patch` | **deleted** | Ethernet PLL4 rework — postponed, see §5 |
+| 6 | `recipes-kernel/linux/linux-stm32mp_%.bbappend` | **modified** | new SRC_URI (SCMI patch only) |
 | 7 | `recipes-kernel/linux/linux-stm32mp/6.6/6.6.129/0001-ARM-dts-stm32-add-SCMI-variant-for-stm32mp157c-odysse.patch` | **new** | kernel SCMI clock/reset overlay for the OP‑TEE flow |
-| 8 | `recipes-kernel/linux/linux-stm32mp/6.6/6.6.129/0002-ARM-dts-stm32mp157c-odyssey-add-SPI5-ILI9486-display.patch` | **new** | SPI5 ILI9486 panel + ADS7846 touch on the 40‑pin header |
-| 9 | `recipes-kernel/linux/linux-stm32mp/odyssey/fragment-90-spi-tft-display.config` | **new** | kernel config: re‑enable staging/fbtft/fbcon, `ads7846`, `SPI_STM32=y` |
-| 10 | `recipes-kernel/linux/linux-stm32mp/6.1/6.1.82/000{1,2,3}-*.patch` | **deleted** | mickledore 6.1 patches (bootup fix, eth VCO, USB‑host) — do not apply to 6.6 |
-| 11 | `recipes-bsp/trusted-firmware-a/…` (bbappend + 2 patches) | **deleted** | TF‑A i2c2 + eth‑VCO patches — not needed; ST BSP TF‑A used as‑is |
-| 12 | `recipes-bsp/u-boot/…` (bbappend + 2 patches) | **deleted** | U‑Boot board + eth‑VCO patches — board already in ST BSP U‑Boot; DT pinned via `local.conf` |
-| 13 | `recipes-example/example/example_0.1.bb` | **deleted** | layer skeleton sample, unused |
-| 14 | `recipes-st/images/st-image-weston.bbappend` | **new** | bring‑up tools + sdcard flashlayout shrink |
-| 15 | `recipes-st/images/odyssey-dashboard.bb` | **new** | minimal LVGL kiosk image (no Weston) |
-| 16 | `recipes-hmi/car-dashboard/car-dashboard_1.0.bb` + `files/` | **new** | LVGL speedometer scaffold app (fbdev + evdev) |
-| 17 | `docs/spi-display.md`, `docs/scarthgap-port.md` | **new** | documentation |
+| 8 | `recipes-kernel/linux/linux-stm32mp/6.1/6.1.82/000{1,2,3}-*.patch` | **deleted** | mickledore 6.1 patches (bootup fix, eth VCO, USB‑host) — do not apply to 6.6 |
+| 9 | `recipes-bsp/trusted-firmware-a/…` (bbappend + 2 patches) | **deleted** | TF‑A i2c2 + eth‑VCO patches — not needed; ST BSP TF‑A used as‑is |
+| 10 | `recipes-bsp/u-boot/…` (bbappend + 2 patches) | **deleted** | U‑Boot board + eth‑VCO patches — board already in ST BSP U‑Boot; DT pinned via `local.conf` |
+| 11 | `recipes-example/example/example_0.1.bb` | **deleted** | layer skeleton sample, unused |
+| 12 | `recipes-st/images/st-image-weston.bbappend` | **new** | sdcard flashlayout shrink |
+| 13 | `docs/scarthgap-port.md` | **new** | this document |
 
-Base‑commit reference: `git -C layers/meta-st-odyssey diff ca506e6` reproduces
-items 1–16.
+The display/touch/demo items that used to be numbered here (SPI5 ILI9486
+patch, the ads7846 fixes, the config fragment, `odyssey-dashboard.bb`,
+`car-dashboard`) now live in `meta-odyssey-demo` — see that layer's own
+change report.
 
 ---
 
-## 2. OP‑TEE — Odyssey board device tree  (items 1–2)
+## 2. OP‑TEE — Odyssey board device tree
 
 ### 2.1 `optee-os-stm32mp_%.bbappend`
 
@@ -124,9 +125,9 @@ Deltas from the DK2:
   hand I2C2 to the non‑secure world; `HASH1` left `NS_RW`, `RNG1` `S_RW`.
 - **LTDC / DSI / DSI panel disabled** (`&ltdc`, `&dsi`, `&dsi`'s `panel@0`
   `otm8009a` all end up inert). The Odyssey's on‑board DSI FPC is not usable with
-  the panels in the field; the display path is the SPI ILI9486 (§4). This also
-  means **no `/dev/dri` node and no GPU (Vivante) acceleration** on this board —
-  by design.
+  the panels in the field. This means **no `/dev/dri` node and no GPU (Vivante)
+  acceleration** on this board — by design. `meta-odyssey-demo`'s SPI panel is
+  the display path.
 - MCU‑SRAM isolation nodes (`SRAM1/2/3`, `RETRAM` with
   `DECPROT_MCU_ISOLATION`) are inherited from `dkx.dtsi` — the Cortex‑M4 memory
   carve‑out is already firewall‑ready for a future remoteproc bring‑up.
@@ -144,17 +145,14 @@ Deltas from the DK2:
 
 ---
 
-## 3. Kernel — SCMI variant  (items 6–7)
+## 3. Kernel — SCMI variant
 
-### 3.1 `linux-stm32mp_%.bbappend` (new SRC_URI)
+### 3.1 `linux-stm32mp_%.bbappend`
 
 ```
 SRC_URI += " \
     file://${LINUX_VERSION}/${LINUX_VERSION}${LINUX_SUBVERSION}/0001-ARM-dts-stm32-add-SCMI-variant-for-stm32mp157c-odysse.patch \
-    file://${LINUX_VERSION}/${LINUX_VERSION}${LINUX_SUBVERSION}/0002-ARM-dts-stm32mp157c-odyssey-add-SPI5-ILI9486-display.patch \
-    file://odyssey/fragment-90-spi-tft-display.config;subdir=fragments \
 "
-KERNEL_CONFIG_FRAGMENTS:append = " ${WORKDIR}/fragments/odyssey/fragment-90-spi-tft-display.config"
 ```
 
 ### 3.2 Patch `0001-…-add-SCMI-variant-…`
@@ -177,110 +175,34 @@ at clock init on the `FlashLayout_*-odyssey-optee.tsv` images. The `.dtb`
 filename is unchanged, so `STM32MP_DT_FILES_*` / flashlayout handling is
 unaffected.
 
----
-
-## 4. Kernel — SPI ILI9486 display + touch  (items 8–9)
-
-### 4.1 Patch `0002-…-add-SPI5-ILI9486-display.patch`
-
-Appends ~87 lines to `arch/arm/boot/dts/st/stm32mp157c-odyssey.dts`:
-
-- a board pinmux group `spi5_odyssey_pins_a` — SCK **PH6**, MOSI **PF9**, MISO
-  **PH7** (the header SPI5 pins differ from the stock `spi5_pins_a` PF7/PF8
-  group) + a `spi5_odyssey_sleep_pins_a` analog group.
-- `&spi5`: `cs-gpios = <&gpiof 6 …>, <&gpiof 3 …>` (LCD CS = PF6, touch CS =
-  PF3, both GPIO chip‑selects), `status = "okay"`.
-  - `display@0` — `compatible = "ilitek,ili9486"`, `spi-max-frequency =
-    <32000000>`, `buswidth 8`, `regwidth 16`, `rotate 90`, `fps 30`,
-    `dc-gpios = <&gpioe 7 …>` (PE7), `reset-gpios = <&gpioe 8 …>` (PE8), and the
-    Waveshare 3.5"(C) `init` sequence.
-  - `touchscreen@1` — `compatible = "ti,ads7846"`, `spi-max-frequency
-    <2000000>`, IRQ on `&gpiod 4` (PD4, falling edge), `pendown-gpio`,
-    `ti,swap-xy`, `wakeup-source`.
-
-Header pin map is in [`spi-display.md`](spi-display.md).
-
-### 4.2 Config fragment `fragment-90-spi-tft-display.config`
-
-The ST `stm32mp` "cleanup" fragment disables `CONFIG_STAGING` and
-`CONFIG_FRAMEBUFFER_CONSOLE`; this fragment re‑enables what `fbtft` needs:
-
-```
-CONFIG_STAGING=y
-CONFIG_FB_TFT=m
-CONFIG_FB_TFT_ILI9486=m
-CONFIG_TOUCHSCREEN_ADS7846=m
-CONFIG_SPI_STM32=y          # base config has it =m; needed early
-CONFIG_SPI_SPIDEV=y
-CONFIG_FRAMEBUFFER_CONSOLE=y
-CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
-```
-
-Modules autoload from the DT compatibles. Because LTDC/DSI are disabled (§2.3),
-the ILI9486 panel is the **only** framebuffer and comes up as **`/dev/fb0`**
-(480×320, RGB565). Touch is an `/dev/input/eventN` (`ADS7846 Touchscreen`).
+`meta-odyssey-demo`'s kernel bbappend adds its own patches (SPI5 display DT,
+ads7846 fixes) on top of this one — Yocto stacks every layer's
+`linux-stm32mp_%.bbappend` for the same recipe, so both apply together
+whenever that optional layer is present.
 
 ---
 
-## 5. Images  (items 14–15)
+## 4. Image — `st-image-weston.bbappend`
 
-### 5.1 `recipes-st/images/st-image-weston.bbappend`
-
-- `IMAGE_INSTALL:append = " fbset evtest libgpiod-tools fbgrab"` — bring‑up tools.
-- **sdcard flashlayout shrink.** Stock sdcard layout reserves a 4 GiB rootfs
-  slot → the raw `.img` is ~4.9 GiB while the rootfs uses ~530 MiB. This trims
-  the rootfs partition so `userfs` slides up and the raw image is ~1.9 GiB.
-  `FLASHLAYOUT_PARTITION_SIZE:sdcard:rootfs` can only be overridden from an
-  **anonymous python function** — `flashlayout-stm32mp.bbclass` `require`s
-  `st-machine-flashlayout-stm32mp.inc` at parse time and
-  `bb.data.expandKeys()` renames/re‑clobbers the key *after* any plain /
-  `:append` / `:forcevariable` assignment:
-  ```python
-  python () {
-      d.setVar('FLASHLAYOUT_PARTITION_SIZE:sdcard:rootfs', '1835008')
-  }
-  ```
-  Paired with `STM32MP_ROOTFS_SIZE` / `STM32MP_USERFS_SIZE` in `local.conf`
-  (§8) — those must be global because `sdcard-raw-tools.bb` also reads them.
-
-### 5.2 `recipes-st/images/odyssey-dashboard.bb` (new image)
-
+**sdcard flashlayout shrink.** Stock sdcard layout reserves a 4 GiB rootfs
+slot → the raw `.img` is ~4.9 GiB while the rootfs uses ~530 MiB. This trims
+the rootfs partition so `userfs` slides up and the raw image is ~1.9 GiB.
+`FLASHLAYOUT_PARTITION_SIZE:sdcard:rootfs` can only be overridden from an
+**anonymous python function** — `flashlayout-stm32mp.bbclass` `require`s
+`st-machine-flashlayout-stm32mp.inc` at parse time and
+`bb.data.expandKeys()` renames/re‑clobbers the key *after* any plain /
+`:append` / `:forcevariable` assignment:
+```python
+python () {
+    d.setVar('FLASHLAYOUT_PARTITION_SIZE:sdcard:rootfs', '1835008')
+}
 ```
-require recipes-st/images/st-image-core.bb
-IMAGE_INSTALL:append = " car-dashboard kernel-modules libgpiod-tools evtest fbset fbgrab"
-IMAGE_FEATURES:remove = "package-management"
-SYSTEMD_DEFAULT_TARGET = "multi-user.target"
-python () { d.setVar('FLASHLAYOUT_PARTITION_SIZE:sdcard:rootfs', '1835008') }
-```
-
-Same firmware stack as `st-image-weston` (TF‑A + OP‑TEE + U‑Boot), ~234 MB
-rootfs, **no Weston / no display‑manager** — boots straight to the LVGL app on
-`/dev/fb0`. Built and verified on hardware.
+Paired with `STM32MP_ROOTFS_SIZE` / `STM32MP_USERFS_SIZE` in `local.conf`
+(§6) — those must be global because `sdcard-raw-tools.bb` also reads them.
 
 ---
 
-## 6. `car-dashboard` LVGL app  (item 16)
-
-`recipes-hmi/car-dashboard/`:
-
-| File | Role |
-|---|---|
-| `car-dashboard_1.0.bb` | recipe: vendors LVGL (git, `SRCREV e1c0b21b…` = meta‑oe 9.1.0 pin) into `${S}/lvgl`, cmake‑builds `main.c` + `add_subdirectory(lvgl)`; generates `lv_conf.h` from `lvgl/lv_conf_template.h` at `do_configure` (sed: `LV_COLOR_DEPTH 16`, `LV_USE_LINUX_FBDEV/EVDEV 1`, dark theme, Montserrat 20/28/40); installs a systemd unit. `RDEPENDS` on the `fb_ili9486`/`fbtft`/`ads7846` kernel modules. |
-| `files/main.c` | LVGL v9 scaffold: `lv_linux_fbdev_create()` → `/dev/fb0` (or `$LV_VIDEO_CARD`), `lv_evdev_create()` → autodetected ABS touch node (or `$LV_TOUCH_DEV`), a dark `lv_arc` speedometer + animated needle + a live touch read‑out. Replace `build_dashboard()` with the real UI. |
-| `files/CMakeLists.txt` | cmake ≥3.12.4, `LV_CONF_INCLUDE_SIMPLE`, links `lvgl m pthread`. |
-| `files/car-dashboard.service` | `Type=simple`, `Restart=always`, `WantedBy=multi-user.target`; `ExecStartPre` unbinds vtcon1 and lowers `printk` so the kernel console doesn't scribble on the panel. |
-| `files/lv_conf_overlay.h` | documentation‑only — lists the `lv_conf.h` values the recipe sed's in. |
-
-Rendering is 100 % CPU (LVGL software renderer) — the only option on this board
-(fbdev panel, no DRM/GPU). SPI at 32 MHz gives ~30 fps full‑screen.
-
-**Known open item:** LVGL v9's evdev driver passes raw ADS7846 coordinates with
-no calibration, so touch presses currently don't map to screen space — needs
-`lv_evdev_set_calibration()` in `main.c` with the panel's observed min/max.
-
----
-
-## 7. Not done / postponed
+## 5. Not done / postponed
 
 - **Ethernet.** The Odyssey PHY needs RGMII 125 MHz off PLL4‑P, but the OP‑TEE
   `&rcc` PLL4 VCO is 594 MHz (→ PLL4_P = 99 MHz) and the secure RCC refuses the
@@ -295,7 +217,7 @@ no calibration, so touch presses currently don't map to screen space — needs
 
 ---
 
-## 8. Build‑tree settings (NOT part of the layer)
+## 6. Build‑tree settings (NOT part of the layer)
 
 The build uses ST's generic `MACHINE = "stm32mp1"` and selects the board via
 `STM32MP_DT_FILES_*`, so there is no board machine/distro conf to carry these —
@@ -328,7 +250,7 @@ rest are convenience/perf.
 
 ---
 
-## 9. Boot status (verified on hardware)
+## 7. Boot status (verified on hardware)
 
 ```
 BootROM → TF-A BL2 → OP-TEE 4.0.0 (BL32) → U-Boot → Linux 6.6.129 → systemd → login
@@ -339,29 +261,30 @@ Confirmed working from the kernel log:
 - SCMI clocks/resets/regulators (OP-TEE)
 - STPMIC1 on I2C2 — `stpmic1 1-0033: PMIC Chip Version: 0x21`
 - SD‑card + eMMC
-- ILI9486 panel on `/dev/fb0` (`fb_ili9486`, 480×320, 32 MHz)
-- ADS7846 touch (`/dev/input/eventN`)
-- Weston (software / pixman backend) → login, and the `odyssey-dashboard`
-  kiosk image → LVGL speedometer
+- Weston (software / pixman backend) → login
 
-Not working: Ethernet (§7), touch coordinate mapping in the LVGL app (§6).
+Not working: Ethernet (§5). Display/touch bring-up is covered in
+`meta-odyssey-demo`'s own docs, not here.
 
 ---
 
-## 10. How to build
+## 8. How to build
 
 ```sh
 # host too new for scarthgap's own tools -> buildtools-extended wrapper
-./bb.sh st-image-weston          # full Weston image
-./bb.sh odyssey-dashboard        # minimal LVGL kiosk image
+./bb.sh st-image-weston
 
 # sdcard raw (buildtools env needed for sgdisk/mkfs.vfat/mcopy):
 cd .../deploy/images/stm32mp1
 source .../buildtools/environment-setup-x86_64-pokysdk-linux
 env SDCARD_SIZE=4096 ./scripts/create_sdcard_from_flashlayout.sh --compress \
-    flashlayout_<image>/optee/FlashLayout_sdcard_stm32mp157c-odyssey-optee.tsv
+    flashlayout_st-image-weston/optee/FlashLayout_sdcard_stm32mp157c-odyssey-optee.tsv
 
 # flash:
 sudo dd if=FlashLayout_sdcard_stm32mp157c-odyssey-optee.raw of=/dev/mmcblk0 \
     bs=8M conv=fsync status=progress
 ```
+
+For the SPI display + touch + LVGL kiosk demo, add `meta-odyssey-demo` to
+`bblayers.conf` and build `odyssey-dashboard` instead — see that layer's
+README.
