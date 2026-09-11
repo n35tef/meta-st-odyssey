@@ -7,17 +7,6 @@
 **Layer base commit:** `ca506e6` ("wip", 2026‑09‑05) — the pre‑existing
 mickledore‑era layer.
 
-This document covers the **base board-support layer only** — what makes any
-Odyssey board boot through the OpenSTLinux secure flow. The Waveshare SPI
-display + XPT2046 touch + LVGL kiosk demo used to live in this same layer;
-they were split out into a separate, optional
-[meta-odyssey-demo](../../meta-odyssey-demo) layer so a plain `meta-st-odyssey`
-checkout stays pure board support. See that layer's README and
-`docs/` for the display/touch/demo change report.
-
-This document is meant to be the basis of an upstream contribution back to
-Seeed.
-
 ---
 
 ## 0. TL;DR — what this layer does
@@ -53,11 +42,6 @@ or `layers/meta-st/` were modified.
 | 11 | `recipes-example/example/example_0.1.bb` | **deleted** | layer skeleton sample, unused |
 | 12 | `recipes-st/images/st-image-weston.bbappend` | **new** | sdcard flashlayout shrink |
 | 13 | `docs/scarthgap-port.md` | **new** | this document |
-
-The display/touch/demo items that used to be numbered here (SPI5 ILI9486
-patch, the ads7846 fixes, the config fragment, `odyssey-dashboard.bb`,
-`car-dashboard`) now live in `meta-odyssey-demo` — see that layer's own
-change report.
 
 ---
 
@@ -263,9 +247,6 @@ Confirmed working from the kernel log:
 - SD‑card + eMMC
 - Weston (software / pixman backend) → login
 
-Not working: Ethernet (§5). Display/touch bring-up is covered in
-`meta-odyssey-demo`'s own docs, not here.
-
 ---
 
 ## 8. How to build
@@ -284,7 +265,3 @@ env SDCARD_SIZE=4096 ./scripts/create_sdcard_from_flashlayout.sh --compress \
 sudo dd if=FlashLayout_sdcard_stm32mp157c-odyssey-optee.raw of=/dev/mmcblk0 \
     bs=8M conv=fsync status=progress
 ```
-
-For the SPI display + touch + LVGL kiosk demo, add `meta-odyssey-demo` to
-`bblayers.conf` and build `odyssey-dashboard` instead — see that layer's
-README.
