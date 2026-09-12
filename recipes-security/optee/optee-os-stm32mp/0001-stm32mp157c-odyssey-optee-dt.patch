@@ -12,7 +12,7 @@ Upstream-Status: Inappropriate [out-of-tree board]
 
 --- /dev/null
 +++ b/core/arch/arm/dts/stm32mp157c-odyssey.dts
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,315 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 +/*
 + * Copyright (C) STMicroelectronics 2019 - All Rights Reserved
@@ -97,6 +97,7 @@ Upstream-Status: Inappropriate [out-of-tree board]
 +		DECPROT(STM32MP1_ETZPC_STGENC_ID, DECPROT_S_RW, DECPROT_LOCK)
 +		DECPROT(STM32MP1_ETZPC_BKPSRAM_ID, DECPROT_S_RW, DECPROT_LOCK)
 +		DECPROT(STM32MP1_ETZPC_IWDG1_ID, DECPROT_S_RW, DECPROT_LOCK)
++		DECPROT(STM32MP1_ETZPC_ETH_ID, DECPROT_NS_RW, DECPROT_UNLOCK)
 +	>;
 +};
 +
@@ -306,6 +307,26 @@ Upstream-Status: Inappropriate [out-of-tree board]
 +			status = "disabled";
 +		};
 +	};
++};
++
++/* Odyssey's KSZ9031RN needs a 125MHz RGMII reference clock off PLL4_P.
++ * TF-A (tf-a-stm32mp bbappend, this same layer) already raises PLL4's
++ * VCO from the dkx.dtsi stock 594MHz to 750MHz at cold boot so the
++ * hardware itself is correct - but without this override OP-TEE's own
++ * clock-tree model (parsed from this devicetree, independent of what
++ * TF-A actually wrote to the PLL4 registers) still assumes the stock
++ * 594MHz VCO it inherited from dkx.dtsi. SCMI validates the kernel's
++ * PLL4_P reparent/rate request against THIS model, not live hardware
++ * state, and 125MHz is mathematically unreachable from a 594MHz VCO
++ * (max P = 99MHz) - so the request is rejected with -EINVAL even
++ * though the silicon is already at the right rate. Keep this in sync
++ * with the TF-A-side patch if either one ever changes. */
++&pll4_vco_594Mhz {
++	divmn = <3 124>;
++};
++
++&pll4_cfg1 {
++	st,pll_div_pqr = <5 11 11>;
 +};
 --- a/core/drivers/clk/clk-stm32mp15.c
 +++ b/core/drivers/clk/clk-stm32mp15.c

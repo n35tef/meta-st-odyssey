@@ -1,0 +1,53 @@
+From: meta-st-odyssey <build@local>
+Date: Sat, 12 Sep 2026 01:20:00 +0200
+Subject: [PATCH] ARM: dts: stm32mp157c-odyssey: add OP-TEE TEE client node
+
+U-Boot's stm32mp_bsec driver only uses the OP-TEE-mediated PTA_BSEC
+path when it can find a bound TEE client (priv->tee); otherwise it
+falls back to the legacy raw stm32_smc(STM32_SMC_BSEC, ...) call.
+Without a "linaro,optee-tz" firmware/optee node in this board's own
+devicetree, U-Boot's TEE probe never finds the running OP-TEE
+instance, so every BSEC access (MAC address from OTP, board ID, etc.)
+takes the legacy path - which fails once OP-TEE has taken exclusive
+ownership of BSEC in this secure boot flow:
+
+    stm32_smc: Failed to exec svc=82001003 op=1 in secure mode (err = -1)
+    Error: ethernet@5800a000 address not set.
+    No ethernet found.
+
+ST's own DK1/DK2/ED1 boards get this node via their -scmi.dtsi
+overlays (e.g. stm32mp157c-dk2-scmi.dtsi); this board never had one.
+Add just the TEE client node itself, not the separate SCMI-over-OP-TEE
+clock/reset transport those overlays also carry alongside it - U-Boot
+doesn't touch any of the peripherals that transport would reparent.
+
+Upstream-Status: Inappropriate [out-of-tree board]
+
+--- a/arch/arm/dts/stm32mp157c-odyssey.dts
++++ b/arch/arm/dts/stm32mp157c-odyssey.dts
+@@ -31,6 +31,25 @@
+ 		};
+ 	};
+ 
++	/* U-Boot's own BSEC (OTP) access needs a TEE client session to
++	 * OP-TEE's PTA_BSEC - without this node U-Boot's TEE probe never
++	 * finds OP-TEE, so every BSEC read/write (MAC address, board ID,
++	 * etc.) falls through to the legacy raw-SMC path, which fails
++	 * once OP-TEE has taken exclusive ownership of BSEC:
++	 *   stm32_smc: Failed to exec svc=82001003 op=1 in secure mode (err = -1)
++	 * ST's own DK1/DK2/ED1 boards get this via their -scmi.dtsi
++	 * overlays; this board never had one. Just the TEE client node is
++	 * needed here (not the separate SCMI-over-OP-TEE clock/reset
++	 * transport those overlays also carry - U-Boot doesn't touch any
++	 * of the peripherals that would reparent to). */
++	firmware {
++		optee: optee {
++			compatible = "linaro,optee-tz";
++			method = "smc";
++			interrupt-parent = <&intc>;
++			interrupts = <GIC_PPI 15 (GIC_CPU_MASK_SIMPLE(2) | IRQ_TYPE_LEVEL_LOW)>;
++		};
++	};
+ };
+ 
+ &adc {

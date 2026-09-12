@@ -20,7 +20,7 @@ mickledore‑era layer.
    longer apply and are not needed on 6.6.
 
 Everything is contained in `layers/meta-st-odyssey/` plus a handful of
-`local.conf` settings (section 6). No files under `layers/openembedded-core/`
+`local.conf` settings (section 7). No files under `layers/openembedded-core/`
 or `layers/meta-st/` were modified.
 
 ---
@@ -33,12 +33,16 @@ or `layers/meta-st/` were modified.
 | 2 | `recipes-security/optee/optee-os-stm32mp/0001-stm32mp157c-odyssey-optee-dt.patch` | **new** | OP‑TEE Odyssey board DT + non‑secure I2C2 kernel clock + `conf.mk` flavour |
 | 3 | `recipes-security/optee/optee-os-stm32mp/0001-Add-stm32mp157c-odyssey-device-tree-based-on-dk2.patch` | **deleted** | superseded by #2 |
 | 4 | `recipes-security/optee/optee-os-stm32mp/0002-stm32mp157c-odyssey-pmic-on-i2c2.patch` | **deleted** | superseded by #2 (mickledore‑era, `&hash1` / RNG1 assumptions broke 4.0.0) |
-| 5 | `recipes-security/optee/optee-os-stm32mp/0003-fix-change-VCO-from-594MHz-to-750MHz-for-eth-phy.patch` | **deleted** | Ethernet PLL4 rework — postponed, see §5 |
+| 5 | `recipes-security/optee/optee-os-stm32mp/0003-fix-change-VCO-from-594MHz-to-750MHz-for-eth-phy.patch` | **deleted** | mickledore‑era OP‑TEE‑side half of the eth‑PHY VCO fix — superseded, see §4 |
 | 6 | `recipes-kernel/linux/linux-stm32mp_%.bbappend` | **modified** | new SRC_URI (SCMI patch only) |
 | 7 | `recipes-kernel/linux/linux-stm32mp/6.6/6.6.129/0001-ARM-dts-stm32-add-SCMI-variant-for-stm32mp157c-odysse.patch` | **new** | kernel SCMI clock/reset overlay for the OP‑TEE flow |
+| 7a | `recipes-kernel/linux/linux-stm32mp/6.6/6.6.129/0002-…-mac-level-phy-reset-delay.patch` | **new** | eth‑PHY reset fix, see §3.3 |
+| 7b | `recipes-kernel/linux/linux-stm32mp/6.6/6.6.129/0003-…-drop-broken-eth-assigned.patch` | **new** | drop broken `assigned-clocks`, see §3.3 |
 | 8 | `recipes-kernel/linux/linux-stm32mp/6.1/6.1.82/000{1,2,3}-*.patch` | **deleted** | mickledore 6.1 patches (bootup fix, eth VCO, USB‑host) — do not apply to 6.6 |
-| 9 | `recipes-bsp/trusted-firmware-a/…` (bbappend + 2 patches) | **deleted** | TF‑A i2c2 + eth‑VCO patches — not needed; ST BSP TF‑A used as‑is |
-| 10 | `recipes-bsp/u-boot/…` (bbappend + 2 patches) | **deleted** | U‑Boot board + eth‑VCO patches — board already in ST BSP U‑Boot; DT pinned via `local.conf` |
+| 9 | `recipes-bsp/trusted-firmware-a/tf-a-stm32mp_%.bbappend` | **new** (re‑added) | eth‑PHY PLL4 VCO fix, see §4 — the i2c2 patch from the old bbappend is still not needed, board DT is upstream |
+| 9a | `recipes-bsp/trusted-firmware-a/tf-a-stm32mp/0001-fix-raise-PLL4-VCO-to-750MHz-for-eth-phy.patch` | **new** | ports the mickledore‑era fix onto ST's current upstream `stm32mp157c-odyssey-som.dtsi` |
+| 10 | `recipes-bsp/u-boot/u-boot-stm32mp_%.bbappend` | **new** (re‑added) | OP‑TEE TEE‑client node, see §4.3 |
+| 10a | `recipes-bsp/u-boot/u-boot-stm32mp/0001-…-add-optee-tee-client-node.patch` | **new** | lets U‑Boot's BSEC driver reach PTA_BSEC (MAC address, board ID OTP reads) once OP‑TEE owns BSEC exclusively |
 | 11 | `recipes-example/example/example_0.1.bb` | **deleted** | layer skeleton sample, unused |
 | 12 | `recipes-st/images/st-image-weston.bbappend` | **new** | sdcard flashlayout shrink |
 | 13 | `docs/scarthgap-port.md` | **new** | this document |
@@ -110,8 +114,7 @@ Deltas from the DK2:
 - **LTDC / DSI / DSI panel disabled** (`&ltdc`, `&dsi`, `&dsi`'s `panel@0`
   `otm8009a` all end up inert). The Odyssey's on‑board DSI FPC is not usable with
   the panels in the field. This means **no `/dev/dri` node and no GPU (Vivante)
-  acceleration** on this board — by design. `meta-odyssey-demo`'s SPI panel is
-  the display path.
+  acceleration** on this board — by design.
 - MCU‑SRAM isolation nodes (`SRAM1/2/3`, `RETRAM` with
   `DECPROT_MCU_ISOLATION`) are inherited from `dkx.dtsi` — the Cortex‑M4 memory
   carve‑out is already firewall‑ready for a future remoteproc bring‑up.
@@ -159,14 +162,89 @@ at clock init on the `FlashLayout_*-odyssey-optee.tsv` images. The `.dtb`
 filename is unchanged, so `STM32MP_DT_FILES_*` / flashlayout handling is
 unaffected.
 
-`meta-odyssey-demo`'s kernel bbappend adds its own patches (SPI5 display DT,
-ads7846 fixes) on top of this one — Yocto stacks every layer's
-`linux-stm32mp_%.bbappend` for the same recipe, so both apply together
-whenever that optional layer is present.
+### 3.3 Patches `0002`/`0003` — Ethernet fix
+
+- **0002** moves the KSZ9031RN's reset to the MAC level
+  (`snps,reset-gpio`/`snps,reset-delays-us = <0 30000 50000>` on `&ethernet0`,
+  `mdio` → `mdio0`) instead of mainline's default per‑PHY `reset-gpios`
+  (300us deassert‑to‑scan — too short for this PHY's PLL to settle, so it
+  never answers MDIO). Restores the mickledore‑era fix that was dropped
+  without a stated reason during this port.
+- **0003** drops the `assigned-clocks`/`assigned-clock-parents`/
+  `assigned-clock-rates` on `&ethernet0` — `ETHCK_K` lost its own mux in the
+  driver's 6.1‑stm32mp refactor (now a single hardcoded parent), so the
+  reparent request is a no‑op `-EINVAL` every boot. Harmless but pointless;
+  ST's own DK1/DK2/EV1 never had this construct.
 
 ---
 
-## 4. Image — `st-image-weston.bbappend`
+## 4. TF‑A — Ethernet PLL4 fix
+
+### 4.1 `tf-a-stm32mp_%.bbappend`
+
+```
+SRC_URI += " \
+    file://0001-fix-raise-PLL4-VCO-to-750MHz-for-eth-phy.patch \
+"
+```
+
+### 4.2 Why this is needed
+
+ST's own TF‑A fork already carries this board's DT
+(`fdts/stm32mp157c-odyssey.dts` + `-som.dtsi` + `-fw-config.dts`) upstream —
+no board‑bring‑up patch is needed to boot. But `-som.dtsi` selects PLL4_P as
+the Ethernet clock parent (`CLK_ETH_PLL4P` in `st,pkcs`) while leaving PLL4 at
+its generic default: VCO 594 MHz → P = 99 MHz. The onboard KSZ9031RN needs an
+exact 125 MHz RGMII reference clock, and the kernel's own (also upstream,
+unpatched) `ethernet0` node already requests
+`assigned-clock-rates = <125000000>` on `PLL4_P` — a request 99 MHz can never
+satisfy, so the PHY link never comes up.
+
+TF‑A's BL2 stage is what actually programs PLL4 at cold boot. The fix is a
+one‑line divider change in `-som.dtsi`: VCO 594→750 MHz
+(`divmn = <3 98>` → `<3 124>`), giving P = 125 MHz
+(`st,pll_div_pqr = <5 7 7>` → `<5 11 11>`).
+
+OP‑TEE's own board DT needs the *same* override even though it never
+reprograms PLL4 itself: OP‑TEE validates SCMI clock requests against its own
+DT‑described clock‑tree model, independent of what TF‑A actually wrote to
+the real registers — without it, OP‑TEE still assumes the stock 594 MHz VCO
+it inherited from `dkx.dtsi` and rejects the kernel's 125 MHz request as
+unreachable. Same `pll4_vco_594Mhz`/`pll4_cfg1` override, appended to
+`optee-os-stm32mp`'s `0001-stm32mp157c-odyssey-optee-dt.patch` (§2).
+
+This is the same fix the mickledore‑era layer carried
+(`0002-fix-change-VCO-from-594MHz-to-750MHz-for-eth-phy.patch` against TF‑A,
+U‑Boot, kernel 6.1 *and* OP‑TEE) — dropped during the scarthgap port under
+the wrong assumption that TF‑A didn't need it. The kernel half of the old fix
+(`assigned-clock-rates` on `&ethernet0`) turned out to be unnecessary and was
+actively broken on 6.6 — see §3.3. U‑Boot doesn't touch RCC at all in this
+OP‑TEE‑secure boot flow, so no VCO patch is needed there.
+
+Confirmed on hardware via `clk_summary`: `pll4`/`pll4_p`/`ethck_k`/`ethrx`
+all read back at 750/125/125/125 MHz.
+
+### 4.3 U‑Boot — OP‑TEE TEE‑client node
+
+U‑Boot's own BSEC (OTP — MAC address, board ID) access goes through
+`stm32mp_bsec`, which needs a TEE client session to OP‑TEE's `PTA_BSEC` once
+OP‑TEE owns BSEC exclusively. Without it: `stm32_smc: Failed to exec
+svc=82001003 op=1 in secure mode (err = -1)`, `Error: ethernet@5800a000
+address not set.`. ST's own DK1/DK2/EV1 get this via their `-scmi.dtsi`
+overlays; this board never had one. Adds just the
+`firmware { optee { compatible = "linaro,optee-tz"; ... }; }` node to
+U‑Boot's `stm32mp157c-odyssey.dts` — not the separate SCMI‑over‑OP‑TEE
+clock/reset transport those overlays also carry, since U‑Boot doesn't touch
+any peripheral that reparents here.
+
+An earlier attempt also patched U‑Boot's own PLL4 devicetree config,
+assuming U‑Boot's `clk-stm32mp1.c` reprograms PLL4 on every boot. Wrong: that
+code is `#if defined(CONFIG_SPL_BUILD)`, and this board's boot flow has no
+U‑Boot SPL stage at all (TF‑A replaces it) — dead weight, removed.
+
+---
+
+## 5. Image — `st-image-weston.bbappend`
 
 **sdcard flashlayout shrink.** Stock sdcard layout reserves a 4 GiB rootfs
 slot → the raw `.img` is ~4.9 GiB while the rootfs uses ~530 MiB. This trims
@@ -182,18 +260,12 @@ python () {
 }
 ```
 Paired with `STM32MP_ROOTFS_SIZE` / `STM32MP_USERFS_SIZE` in `local.conf`
-(§6) — those must be global because `sdcard-raw-tools.bb` also reads them.
+(§7) — those must be global because `sdcard-raw-tools.bb` also reads them.
 
 ---
 
-## 5. Not done / postponed
+## 6. Not done / postponed
 
-- **Ethernet.** The Odyssey PHY needs RGMII 125 MHz off PLL4‑P, but the OP‑TEE
-  `&rcc` PLL4 VCO is 594 MHz (→ PLL4_P = 99 MHz) and the secure RCC refuses the
-  kernel's reparent request (`-EINVAL`). Fix = port PLL4‑VCO‑750 (`divmn = <3
-  124>`, `pqr = <5 11 11>`) into the OP‑TEE `&rcc` node. The mickledore
-  `0003-fix-change-VCO-…` patches targeted TF‑A/U‑Boot/6.1 and don't apply.
-  **Deleted, not yet re‑implemented.**
 - **Cortex‑M4 remoteproc.** DT infrastructure (`m4_rproc`, `ipcc`,
   `reserved-memory`, MCU‑SRAM isolation) is all present but `status =
   "disabled"`; kernel config already has `STM32_RPROC` / `STM32_IPCC` /
@@ -201,7 +273,7 @@ Paired with `STM32MP_ROOTFS_SIZE` / `STM32MP_USERFS_SIZE` in `local.conf`
 
 ---
 
-## 6. Build‑tree settings (NOT part of the layer)
+## 7. Build‑tree settings (NOT part of the layer)
 
 The build uses ST's generic `MACHINE = "stm32mp1"` and selects the board via
 `STM32MP_DT_FILES_*`, so there is no board machine/distro conf to carry these —
@@ -234,7 +306,7 @@ rest are convenience/perf.
 
 ---
 
-## 7. Boot status (verified on hardware)
+## 8. Boot status
 
 ```
 BootROM → TF-A BL2 → OP-TEE 4.0.0 (BL32) → U-Boot → Linux 6.6.129 → systemd → login
@@ -246,10 +318,17 @@ Confirmed working from the kernel log:
 - STPMIC1 on I2C2 — `stpmic1 1-0033: PMIC Chip Version: 0x21`
 - SD‑card + eMMC
 - Weston (software / pixman backend) → login
+- Ethernet — `end0` UP/RUNNING, DHCP lease, SSH reachable (fixes in §3.3/§4)
+
+RNG1 stays `DECPROT_S_RW` (secure) — OP‑TEE's own DT enables it as OP‑TEE's
+hardware TRNG (stock `stm32mp15xx-dkx.dtsi`, same on every ST reference
+board), and its ETZPC bus‑probe panics if it isn't secure. The Linux‑side
+`rng@54003000 not allowed on bus (-13)` warning is expected: no `/dev/hwrng`
+on this board, by design.
 
 ---
 
-## 8. How to build
+## 9. How to build
 
 ```sh
 # host too new for scarthgap's own tools -> buildtools-extended wrapper

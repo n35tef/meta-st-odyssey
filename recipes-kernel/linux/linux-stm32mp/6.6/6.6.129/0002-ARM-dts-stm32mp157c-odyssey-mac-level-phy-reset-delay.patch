@@ -1,0 +1,53 @@
+From: meta-st-odyssey <build@local>
+Date: Fri, 12 Sep 2026 00:10:00 +0200
+Subject: [PATCH] ARM: dts: stm32mp157c-odyssey: MAC-level PHY reset with
+ long settle delay (mickledore-era fix)
+
+The KSZ9031RN never answered the MDIO bus ("MDIO device at address 7
+is missing", stmmac_open failing with -ENODEV) with mainline's
+default per-PHY reset-gpios/reset-assert-us/reset-deassert-us
+(10000us assert / only 300us deassert-to-scan). Confirmed by direct
+serial testing that this is NOT a probe-ordering/PMIC-timing race
+(unbind/rebind 10+ minutes after boot, PMIC long since up, fails
+identically) and NOT fixed by removing the GPIO reset assertion
+entirely either (tested, no change) - the actual problem is that
+300us is nowhere near long enough for the KSZ9031RN's internal PLL
+to stabilize after reset deassertion before the single-shot,
+no-retry MDIO ID scan runs.
+
+This is the exact fix carried by this board's last known-working
+mickledore-era kernel patch (0002-fix-change-VCO-from-594MHz-to-750MHz-for-eth-phy.patch,
+mingzq <north_sea@qq.com>, dropped without replacement during the
+scarthgap port): move the reset to the MAC level via
+snps,reset-gpio/snps,reset-active-low/snps,reset-delays-us, which
+stmmac_mdio_reset() honors as
+<startup-delay, assert-duration, post-deassert-settle> in
+microseconds - 30ms assert, 50ms settle before the MDIO scan, instead
+of mainline's 300us. Also renames mdio -> mdio0 to match.
+
+Upstream-Status: Inappropriate [out-of-tree board]
+
+--- a/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
++++ b/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
+@@ -42,15 +42,17 @@
+ 	assigned-clock-rates = <125000000>; /* Clock PLL4 to 750Mhz in ATF/U-Boot */
+ 	st,eth-clk-sel;
+
+-	mdio {
++	snps,reset-gpio = <&gpiog 0 GPIO_ACTIVE_LOW>;
++	snps,reset-active-low;
++	snps,reset-delays-us = <0 30000 50000>;
++
++	mdio0 {
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+ 		compatible = "snps,dwmac-mdio";
++
+ 		phy0: ethernet-phy@7 { /* KSZ9031RN */
+ 			reg = <7>;
+-			reset-gpios = <&gpiog 0 GPIO_ACTIVE_LOW>; /* ETH_RST# */
+-			reset-assert-us = <10000>;
+-			reset-deassert-us = <300>;
+ 		};
+ 	};
+ };

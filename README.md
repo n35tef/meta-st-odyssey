@@ -6,10 +6,7 @@ OpenSTLinux secure flow - TF-A → OP-TEE → U-Boot → Linux, with SCMI
 clocks/resets/regulators owned by OP-TEE.
 
 This layer is deliberately minimal: OP-TEE board DT + the kernel SCMI
-overlay + the local.conf settings the board needs. It carries no display,
-touch or demo application code. For the Waveshare 3.5" SPI panel + XPT2046
-touch + an LVGL kiosk demo, add the separate
-[meta-odyssey-demo](../meta-odyssey-demo) layer on top - see its README.
+overlay + the local.conf settings the board needs.
 
 Full technical write-up of everything this layer changes and why:
 [`docs/scarthgap-port.md`](docs/scarthgap-port.md).

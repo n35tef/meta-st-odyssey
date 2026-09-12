@@ -1,0 +1,54 @@
+From: meta-st-odyssey <build@local>
+Date: Sat, 12 Sep 2026 00:35:00 +0200
+Subject: [PATCH] ARM: dts: stm32mp157c-odyssey: drop broken eth assigned-clocks
+
+ethck_k (what "&rcc ETHCK_K" refers to) is a plain gate clock with
+exactly one hardcoded parent name, "ck_ker_eth" - it has no mux of
+its own (see clk-stm32mp1.c: "Particulary Kernel Clocks (no mux or
+no gate)"). The actual PLL3_Q/PLL4_P mux lives one level up, in an
+unnamed (NO_ID, not DT-addressable) composite clock.
+
+So this board's
+
+    assigned-clocks = <&rcc ETHCK_K>, <&rcc PLL4_P>;
+    assigned-clock-parents = <&rcc PLL4_P>;
+    assigned-clock-rates = <125000000>;
+
+can never succeed: the kernel's of_clk_set_defaults() calls
+clk_set_parent(ethck_k, pll4_p), the clk core looks for pll4_p in
+ethck_k's own parent array (which contains only "ck_ker_eth"), finds
+no match, and clk_fetch_parent_index() returns -EINVAL - logged every
+boot as "clk: failed to reparent ethck_k to pll4_p: -22". This is a
+plain clk-core topology mismatch, unrelated to OP-TEE/SCMI/ETZPC or
+secure boot in any way, and cannot ever work as written, on any
+kernel with this driver, on any board.
+
+It's also unnecessary: ck_ker_eth's mux already defaults to PLL4_P
+via the (still present) st,eth-clk-sel + OP-TEE/TF-A's static
+CLK_ETH_PLL4P selection (see the tf-a-stm32mp and optee-os-stm32mp
+bbappends in this same layer, which set PLL4 to the correct 750MHz
+VCO for this board's KSZ9031RN). Confirmed on hardware: PLL4/PLL4_P/
+ethck_k/ethrx all read back at the correct 750/125/125/125MHz with
+or without this construct.
+
+ST's own reference devicetree for this SoM family
+(stm32mp15xx-dkx.dtsi, shared by DK1/DK2/EV1 and every official ST
+evaluation kit) never had this construct in the first place - it was
+added specifically for this board by the upstream contributor and,
+as far as we can tell, never actually exercised against this driver
+topology. Remove it to match how ST's own hardware does this.
+
+Upstream-Status: Pending [should go upstream too - see rationale above]
+
+--- a/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
++++ b/arch/arm/boot/dts/st/stm32mp157c-odyssey.dts
+@@ -37,9 +37,6 @@
+ 	phy-mode = "rgmii-id";
+ 	max-speed = <1000>;
+ 	phy-handle = <&phy0>;
+-	assigned-clocks = <&rcc ETHCK_K>, <&rcc PLL4_P>;
+-	assigned-clock-parents = <&rcc PLL4_P>;
+-	assigned-clock-rates = <125000000>; /* Clock PLL4 to 750Mhz in ATF/U-Boot */
+ 	st,eth-clk-sel;
+
+ 	snps,reset-gpio = <&gpiog 0 GPIO_ACTIVE_LOW>;
