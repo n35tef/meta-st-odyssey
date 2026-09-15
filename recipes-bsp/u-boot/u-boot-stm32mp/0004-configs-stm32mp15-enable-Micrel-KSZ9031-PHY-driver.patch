@@ -1,0 +1,27 @@
+From: meta-st-odyssey <build@local>
+Date: Tue, 15 Sep 2026 00:00:00 +0200
+Subject: [PATCH] configs: stm32mp15: enable Micrel KSZ90x1 PHY driver
+
+Neither CONFIG_PHY_MICREL nor CONFIG_PHY_GENERIC is set in this
+defconfig, so the KSZ9031RN on the Seeed Odyssey-STM32MP157C ends up
+bound to U-Boot's generic ethernet PHY driver (confirmed via
+"dm tree": eth_phy_generic_drv, not a Micrel one). The generic driver
+only does bare IEEE-standard register access and skips whatever
+vendor-specific KSZ9031 setup this PHY needs - with it, autonegotiation
+never completes ("Waiting for PHY auto negotiation to complete...
+TIMEOUT!") even after the DMA_MODE_SWR / st,eth-clk-sel fix in this
+same layer got the MAC itself talking to the PHY correctly.
+
+Upstream-Status: Inappropriate [out-of-tree board defconfig change -
+this defconfig is shared by every ST stm32mp15 board, but enabling a
+PHY driver that only activates for boards whose devicetree PHY ID
+actually matches a KSZ9021/KSZ9031 is harmless for the others]
+
+--- a/configs/stm32mp15_defconfig
++++ b/configs/stm32mp15_defconfig
+@@ -188,3 +188,5 @@
+ CONFIG_FWU_MDATA_V2=y
+ # CONFIG_TOOLS_MKEFICAPSULE is not set
+ # CONFIG_TOOLS_MKFWUMDATA is not set
++CONFIG_PHY_MICREL=y
++CONFIG_PHY_MICREL_KSZ90X1=y

@@ -1,0 +1,95 @@
+From: meta-st-odyssey <build@local>
+Date: Mon, 14 Sep 2026 00:05:00 +0200
+Subject: [PATCH] net: dwc_eth_qos: stm32: drive an optional active PHY
+ reset GPIO
+
+The STM32 variant of this driver never touches a PHY reset line at
+all (eqos_start_resets = eqos_null_ops), unlike e.g. the Tegra186
+variant, which does a real assert/deassert sequence. That's fine for
+boards whose PHY comes out of power-on-reset on its own, but the
+Seeed Odyssey-STM32MP157C's KSZ9031RN needs an actual reset pulse
+with a long post-deassert settle time - without it, the DMA
+software-reset (DMA_MODE.SWR) itself never completes ("EQOS_DMA_MODE_SWR
+stuck"), before U-Boot even gets to an MDIO scan: the DMA reset needs
+a live clock domain from the PHY side, and a PHY sitting in an
+unreset/indeterminate state never provides one.
+
+Add an optional "phy-reset-gpios" lookup (tolerating -ENOENT, same as
+every other optional resource in this probe path) and a new
+eqos_start_resets_stm32() that only drives it when present - boards
+without the property (every current ST reference board) keep exactly
+today's behavior.
+
+Upstream-Status: Pending [generic driver change, gated on an optional
+DT property so it's a no-op for every board that doesn't set it]
+
+--- a/drivers/net/dwc_eth_qos.c
++++ b/drivers/net/dwc_eth_qos.c
+@@ -1544,6 +1544,19 @@
+ 	}
+ #endif
+
++	/*
++	 * Optional PHY reset GPIO. Most ST boards don't need this (their PHY
++	 * comes out of power-on-reset on its own), so absence (-ENOENT) is
++	 * not an error - eqos_start_resets_stm32() only drives it if valid.
++	 */
++	ret = gpio_request_by_name(dev, "phy-reset-gpios", 0,
++				   &eqos->phy_reset_gpio,
++				   GPIOD_IS_OUT | GPIOD_IS_OUT_ACTIVE);
++	if (ret && ret != -ENOENT) {
++		pr_err("gpio_request_by_name(phy reset) failed: %d", ret);
++		goto err_free_clk_rx;
++	}
++
+ 	debug("%s: OK\n", __func__);
+ 	return 0;
+
+@@ -1595,11 +1608,38 @@
+ 	if (clk_valid(&eqos->clk_ck))
+ 		clk_free(&eqos->clk_ck);
+ #endif
++	if (dm_gpio_is_valid(&eqos->phy_reset_gpio))
++		dm_gpio_free(dev, &eqos->phy_reset_gpio);
+
+ 	debug("%s: OK\n", __func__);
+ 	return 0;
+ }
+
++/*
++ * Some boards (e.g. Seeed Odyssey-STM32MP157C, KSZ9031RN) need an active
++ * reset pulse with a long post-deassert settle time before the PHY will
++ * answer on MDIO - passive power-on-reset alone is not enough, and this
++ * driver's STM32 variant otherwise never touches the reset line at all
++ * (unlike eqos_start_resets_tegra186()). Only acts if "phy-reset-gpios" is
++ * present in the devicetree; boards without it keep today's behavior.
++ */
++static int eqos_start_resets_stm32(struct udevice *dev)
++{
++	struct eqos_priv *eqos = dev_get_priv(dev);
++
++	if (!dm_gpio_is_valid(&eqos->phy_reset_gpio))
++		return 0;
++
++	debug("%s(dev=%p):\n", __func__, dev);
++
++	dm_gpio_set_value(&eqos->phy_reset_gpio, 1);
++	mdelay(30);
++	dm_gpio_set_value(&eqos->phy_reset_gpio, 0);
++	mdelay(50);
++
++	return 0;
++}
++
+ static int eqos_probe(struct udevice *dev)
+ {
+ 	struct eqos_priv *eqos = dev_get_priv(dev);
+@@ -1752,7 +1792,7 @@
+ 	.eqos_probe_resources = eqos_probe_resources_stm32,
+ 	.eqos_remove_resources = eqos_remove_resources_stm32,
+ 	.eqos_stop_resets = eqos_null_ops,
+-	.eqos_start_resets = eqos_null_ops,
++	.eqos_start_resets = eqos_start_resets_stm32,
+ 	.eqos_stop_clks = eqos_stop_clks_stm32,
+ 	.eqos_start_clks = eqos_start_clks_stm32,
+ 	.eqos_calibrate_pads = eqos_null_ops,

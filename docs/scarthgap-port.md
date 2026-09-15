@@ -43,6 +43,9 @@ or `layers/meta-st/` were modified.
 | 9a | `recipes-bsp/trusted-firmware-a/tf-a-stm32mp/0001-fix-raise-PLL4-VCO-to-750MHz-for-eth-phy.patch` | **new** | ports the mickledore‑era fix onto ST's current upstream `stm32mp157c-odyssey-som.dtsi` |
 | 10 | `recipes-bsp/u-boot/u-boot-stm32mp_%.bbappend` | **new** (re‑added) | OP‑TEE TEE‑client node, see §4.3 |
 | 10a | `recipes-bsp/u-boot/u-boot-stm32mp/0001-…-add-optee-tee-client-node.patch` | **new** | lets U‑Boot's BSEC driver reach PTA_BSEC (MAC address, board ID OTP reads) once OP‑TEE owns BSEC exclusively |
+| 10b | `recipes-bsp/u-boot/u-boot-stm32mp/0002-…-fix-phy-addr-add-reset.patch` | **new** | fix PHY MDIO address + add `st,eth-clk-sel`/`phy-reset-gpios`, see §4.4 |
+| 10c | `recipes-bsp/u-boot/u-boot-stm32mp/0003-net-dwc_eth_qos-stm32-active-phy-reset-gpio.patch` | **new** | generic driver change: optional active PHY reset, see §4.4 |
+| 10d | `recipes-bsp/u-boot/u-boot-stm32mp/0004-configs-stm32mp15-enable-Micrel-KSZ9031-PHY-driver.patch` | **new** | enable `CONFIG_PHY_MICREL_KSZ90X1`, see §4.4 |
 | 11 | `recipes-example/example/example_0.1.bb` | **deleted** | layer skeleton sample, unused |
 | 12 | `recipes-st/images/st-image-weston.bbappend` | **new** | sdcard flashlayout shrink |
 | 13 | `docs/scarthgap-port.md` | **new** | this document |
@@ -241,6 +244,38 @@ An earlier attempt also patched U‑Boot's own PLL4 devicetree config,
 assuming U‑Boot's `clk-stm32mp1.c` reprograms PLL4 on every boot. Wrong: that
 code is `#if defined(CONFIG_SPL_BUILD)`, and this board's boot flow has no
 U‑Boot SPL stage at all (TF‑A replaces it) — dead weight, removed.
+
+### 4.4 U‑Boot — Ethernet (patches 0002–0004)
+
+U‑Boot's own board DTS is a separate, older community port from the
+kernel's — it had its own bugs independent of everything else in this
+layer:
+
+- **Wrong PHY MDIO address** (`ethernet-phy@0`, `reg = <0>`) — the
+  KSZ9031RN is actually at address 7. Fixed in 0002.
+- **Missing `st,eth-clk-sel`** — without it, `board_interface_eth_init()`
+  (`board/st/stm32mp1/stm32mp1.c`) never sets SYSCFG PMCSETR's
+  `eth1_clk_sel` bit, so the SoC's 125MHz `PLL4_P`‑derived clock (correct —
+  confirmed via `clk dump`) never actually reaches the PHY. Result: the MAC's
+  own DMA soft‑reset never completes (`EQOS_DMA_MODE_SWR stuck`, confirmed
+  permanently stuck at the register level via `md.l 0x5800b000 1`, unaffected
+  by any amount of extra delay — this is documented DWC_EQOS behavior, the
+  reset needs a live PHY‑side clock). This was the actual root cause, not PHY
+  reset timing. Fixed in 0002.
+- **No PHY reset GPIO** — the STM32 variant of `drivers/net/dwc_eth_qos.c`
+  never drove a reset line at all (`eqos_start_resets = eqos_null_ops`),
+  unlike e.g. the Tegra186 variant. Not what was blocking `DMA_MODE_SWR`, but
+  still needed for MDIO to work afterward. 0003 adds an optional
+  `phy-reset-gpios` path (a real assert/deassert sequence), no‑op for every
+  board that doesn't set the property.
+- **Generic PHY driver instead of the KSZ9031‑aware one** —
+  `CONFIG_PHY_MICREL_KSZ90X1` wasn't set in `stm32mp15_defconfig`, so the
+  PHY bound to U‑Boot's generic driver (confirmed via `dm tree`:
+  `eth_phy_generic_drv`), which skips whatever vendor‑specific setup this
+  PHY needs before autonegotiation completes. Fixed in 0004.
+
+Confirmed on hardware: `mdio list` shows `Micrel ksz9031`, `mii info` shows
+`1000baseT, FDX`, and `ping` from U‑Boot to the host succeeds.
 
 ---
 

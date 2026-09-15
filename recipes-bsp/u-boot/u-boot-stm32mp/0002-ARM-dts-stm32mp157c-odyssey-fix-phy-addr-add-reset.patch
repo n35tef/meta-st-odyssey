@@ -1,0 +1,48 @@
+From: meta-st-odyssey <build@local>
+Date: Mon, 14 Sep 2026 00:00:00 +0200
+Subject: [PATCH] ARM: dts: stm32mp157c-odyssey: fix PHY MDIO address, add
+ reset GPIO and eth-clk-sel
+
+This board's own U-Boot devicetree had the KSZ9031RN at the wrong MDIO
+address (0) - the kernel, and the vendor Debian image's boot log, both
+confirm it's actually at address 7 (stmmac-0:07).
+
+Also adds:
+- phy-reset-gpios, consumed by dwc_eth_qos.c's new
+  eqos_start_resets_stm32() (see the driver patch in this same layer).
+- st,eth-clk-sel - the property that makes board_interface_eth_init()
+  (board/st/stm32mp1/stm32mp1.c) set SYSCFG PMCSETR's eth1_clk_sel bit,
+  which actually routes the SoC's 125MHz PLL4_P-derived clock out to
+  the PHY as its RGMII reference. Without it (confirmed via "clk dump"
+  showing PLL4_P correctly at 125MHz, so the clock itself was never
+  the problem - just never routed to the PHY pin), the PHY never gets
+  a reference clock at all, and "EQOS_DMA_MODE_SWR stuck" is the
+  documented DWC_EQOS behavior when the DMA soft-reset is attempted
+  with no live PHY-side clock present - confirmed on hardware via
+  "md.l 0x5800b000 1" reading a permanently-stuck 0x00000001,
+  unaffected by any amount of extra settle/poll time. The kernel's
+  own board DTS has always carried this property; this U-Boot DTS
+  (a separate, older/incomplete community port) never did.
+
+Upstream-Status: Inappropriate [out-of-tree board]
+
+--- a/arch/arm/dts/stm32mp157c-odyssey.dts
++++ b/arch/arm/dts/stm32mp157c-odyssey.dts
+@@ -94,13 +94,15 @@
+ 	phy-mode = "rgmii-id";
+ 	max-speed = <1000>;
+ 	phy-handle = <&phy0>;
++	phy-reset-gpios = <&gpiog 0 GPIO_ACTIVE_LOW>;
++	st,eth-clk-sel;
+
+ 	mdio0 {
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+ 		compatible = "snps,dwmac-mdio";
+-		phy0: ethernet-phy@0 {
+-			reg = <0>;
++		phy0: ethernet-phy@7 { /* KSZ9031RN */
++			reg = <7>;
+ 		};
+ 	};
+ };
